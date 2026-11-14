@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>tinySA ログ解析</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--fg:#1d2430;--mute:#6b7585;--line:#d9dde4;--acc:#2563eb;--day:#e08a00;--night:#4f46e5;--grid:#e6e9ee;--max:#d6336c;--shade:rgba(79,70,229,.08)}
+@media (prefers-color-scheme:dark){:root{--bg:#10141b;--card:#181e28;--fg:#e6e9ef;--mute:#8e99ab;--line:#2b3445;--acc:#6ea0ff;--day:#ffb23e;--night:#8f8bff;--grid:#232b39;--max:#ff7aa8;--shade:rgba(143,139,255,.10)}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,"Yu Gothic UI",sans-serif}
+.wrap{max-width:1240px;margin:0 auto;padding:16px}
+h1{font-size:18px;margin:0 0 12px}
+h2{font-size:13px;margin:0 0 6px;color:var(--mute);font-weight:600}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px;margin-bottom:12px}
+.bar{display:flex;flex-wrap:wrap;gap:12px;align-items:end}
+label{display:flex;flex-direction:column;font-size:12px;color:var(--mute);gap:2px}
+input,select,button{font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:4px 8px}
+input[type=text],input[type=number]{width:90px}
+button,input[type=file]{cursor:pointer}
+#drop{border:2px dashed var(--line);border-radius:8px;padding:28px;text-align:center;color:var(--mute)}
+#drop.over{border-color:var(--acc);color:var(--acc)}
+canvas{width:100%;display:block}
+.grid2{display:grid;grid-template-columns:2fr 1fr;gap:12px}
+@media(max-width:800px){.grid2{grid-template-columns:1fr}}
+#info{font-variant-numeric:tabular-nums;color:var(--mute);min-height:20px;font-size:12px}
+table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}
+th,td{text-align:right;padding:3px 8px;border-bottom:1px solid var(--grid)}
+th{color:var(--mute);font-weight:600;font-size:12px}
+tr.r{cursor:pointer}tr.r:hover{background:var(--grid)}tr.sel{background:var(--grid)}
+.lg{display:flex;gap:12px;font-size:12px;color:var(--mute);flex-wrap:wrap;margin-top:4px}
+.lg i{display:inline-block;width:14px;height:3px;margin-right:4px;vertical-align:middle}
+#app{display:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>tinySA ログ解析</h1>
+<div class="card">
+  <div id="drop">CSVをここにドロップ、または <input type="file" id="file" accept=".csv" multiple><br>
+  <small>logs\ の *_max.csv か *_avg.csv（複数日まとめて選択可。max と avg は混ぜない）</small></div>
+  <div id="summary" style="margin-top:8px;color:var(--mute);font-size:12px"></div>
+</div>
+
+<div id="app">
+<div class="card"><div class="bar">
+  <label>つらい時間帯(時-時)<input type="text" id="day" value="9-17"></label>
+  <label>ましな時間帯(時-時)<input type="text" id="night" value="22-5"></label>
+  <label>周波数(MHz)<input type="number" id="freq" step="any"></label>
+  <label>周辺ビン幅(±)<select id="bw"><option>0</option><option>2</option><option selected>5</option><option>10</option><option>25</option></select></label>
+  <label>色 下限dBm<input type="number" id="clo"></label>
+  <label>色 上限dBm<input type="number" id="chi"></label>
+  <button id="auto">色を自動</button>
+</div><div id="info"></div></div>
+
+<div class="card"><h2>ウォーターフォール（横=周波数 / 縦=時間 / 色=dBm）クリックで周波数・時刻を選択</h2>
+<canvas id="cw" height="300"></canvas></div>
+
+<div class="card"><h2>スペクトラム（横軸はウォーターフォールと同じ）</h2>
+<canvas id="cs" height="230"></canvas>
+<div class="lg"><span><i style="background:var(--acc)"></i>選択時刻</span><span><i style="background:var(--day)"></i>昼 平均</span><span><i style="background:var(--night)"></i>夜 平均</span><span><i style="background:var(--max)"></i>全期間 最大</span></div></div>
+
+<div class="grid2">
+<div class="card"><h2>選択周波数の時間変化（影=ましな時間帯）</h2><canvas id="ct" height="220"></canvas></div>
+<div class="card"><h2>選択周波数の時刻別（平均・最小〜最大）</h2><canvas id="ch" height="220"></canvas>
+<div class="lg"><span><i style="background:var(--day)"></i>つらい時間帯</span><span><i style="background:var(--night)"></i>ましな時間帯</span></div></div>
+</div>
+
+<div class="card"><div class="bar"><h2 style="margin:0">ランキング（近傍3ビンは除外）</h2>
+<label>並び順<select id="sort"><option value="diff">昼−夜 差が大きい</option><option value="std">時間変動(標準偏差)</option><option value="max">最大値</option><option value="mean">平均</option></select></label></div>
+<table><thead><tr><th>周波数 MHz</th><th>昼 dBm</th><th>夜 dBm</th><th>差 dB</th><th>平均</th><th>最大</th><th>σ</th></tr></thead><tbody id="rank"></tbody></table></div>
+</div>
+</div>
+
+<script>
+"use strict";
+const $=id=>document.getElementById(id);
+const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+let freqs=[],rows=[],S={};           // S: per-bin stats
+let selBin=0,selRow=0,clo=-100,chi=-40;
+
+// ---------- load ----------
+function parseCSV(text){
+  const lines=text.split(/\r?\n/).filter(l=>l.trim());
+  const hdr=lines[0].split(",").slice(1).map(Number);
+  const out=[];
+  for(let k=1;k<lines.length;k++){
+    const c=lines[k].split(",");
+    if(c.length!==hdr.length+1)continue;
+    const t=new Date(c[0]);if(isNaN(t))continue;
+    const v=new Float32Array(hdr.length);
+    for(let i=0;i<hdr.length;i++)v[i]=+c[i+1];
+    out.push({t,v});
+  }
+  return {hdr,out};
+}
+async function load(files){
+  let h=null,all=[],names=[],skipped=0;
+  for(const f of files){
+    const p=parseCSV(await f.text());
+    if(!p.hdr.length){skipped++;continue}
+    if(h&&(p.hdr.length!==h.length||p.hdr[0]!==h[0]||p.hdr.at(-1)!==h.at(-1))){skipped++;continue}
+    h=p.hdr;all.push(...p.out);names.push(f.name);
+  }
+  if(!all.length){$("summary").textContent="読めるデータなし（ヘッダ不一致 "+skipped+" 件）";return}
+  all.sort((a,b)=>a.t-b.t);
+  freqs=h;rows=all;
+  const dts=[];for(let i=1;i<rows.length;i++)dts.push(rows[i].t-rows[i-1].t);
+  dts.sort((a,b)=>a-b);
+  $("summary").textContent=`${names.join(", ")} — ${rows.length}行 × ${freqs.length}点, ${fmtT(rows[0].t)} 〜 ${fmtT(rows.at(-1).t)}, 間隔 約${dts.length?Math.round(dts[dts.length>>1]/1000):0}秒`+(skipped?` (${skipped}件スキップ)`:"");
+  $("app").style.display="block";
+  autoColor();computeStats(true);redraw();
+}
+$("file").onchange=e=>load([...e.target.files]);
+const dz=$("drop");
+dz.ondragover=e=>{e.preventDefault();dz.classList.add("over")};
+dz.ondragleave=()=>dz.classList.remove("over");
+dz.ondrop=e=>{e.preventDefault();dz.classList.remove("over");load([...e.dataTransfer.files])};
+
+// ---------- util ----------
+const pad=n=>String(n).padStart(2,"0");
+const fmtT=d=>`${d.getMonth()+1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+const fmtF=f=>f>=1e9?(f/1e9).toFixed(3)+"G":f>=1e6?(f/1e6).toFixed(f>=1e8?1:2)+"M":(f/1e3).toFixed(0)+"k";
+function hourIn(spec,h){
+  const m=/^\s*(\d+)\s*-\s*(\d+)\s*$/.exec(spec);if(!m)return false;
+  const a=+m[1],b=+m[2];return a<=b?(h>=a&&h<b):(h>=a||h<b);
+}
+const stops=[[68,1,84],[59,82,139],[33,145,140],[94,201,98],[253,231,37]];
+function color(x){ // x 0..1
+  x=Math.max(0,Math.min(1,x))*(stops.length-1);const i=Math.min(stops.length-2,x|0),f=x-i;
+  return stops[i].map((c,k)=>c+(stops[i+1][k]-c)*f);
+}
+function setup(cv){
+  const dpr=window.devicePixelRatio||1,w=cv.clientWidth,h=+cv.getAttribute("height");
+  cv.width=w*dpr;cv.height=h*dpr;const g=cv.getContext("2d");g.setTransform(dpr,0,0,dpr,0,0);
+  g.font="11px system-ui,sans-serif";return {g,w,h};
+}
+const M={l:52,r:10,t:8,b:22};
+function bandBounds(){ // 各バンドの先頭index
+  const b=[0];
+  for(let i=2;i<freqs.length;i++){
+    const prev=freqs[i-1]-freqs[i-2],cur=freqs[i]-freqs[i-1];
+    if(cur<prev*0.5)b.push(i);
+  }
+  return b;
+}
+function bandBand(i){return +$("bw").value}
+function binVal(row,i,w){let m=-Infinity;for(let k=Math.max(0,i-w);k<=Math.min(freqs.length-1,i+w);k++)if(row.v[k]>m)m=row.v[k];return m}
+
+// ---------- stats ----------
+function computeStats(init){
+  const n=freqs.length,N=rows.length;
+  const mean=new Float32Array(n),max=new Float32Array(n).fill(-1e9),std=new Float32Array(n),dm=new Float32Array(n),nm=new Float32Array(n);
+  const dsum=new Float64Array(n),nsum=new Float64Array(n);let dn=0,nn=0;
+  const dsp=$("day").value,nsp=$("night").value;
+  const s=new Float64Array(n),s2=new Float64Array(n);
+  for(const r of rows){
+    const h=r.t.getHours(),isD=hourIn(dsp,h),isN=hourIn(nsp,h);
+    if(isD)dn++;if(isN)nn++;
+    for(let i=0;i<n;i++){const v=r.v[i];s[i]+=v;s2[i]+=v*v;if(v>max[i])max[i]=v;if(isD)dsum[i]+=v;if(isN)nsum[i]+=v}
+  }
+  for(let i=0;i<n;i++){
+    mean[i]=s[i]/N;std[i]=Math.sqrt(Math.max(0,s2[i]/N-mean[i]*mean[i]));
+    dm[i]=dn?dsum[i]/dn:NaN;nm[i]=nn?nsum[i]/nn:NaN;
+  }
+  S={mean,max,std,dm,nm,dn,nn,diff:dm.map((d,i)=>d-nm[i])};
+  if(init){
+    selRow=rows.length-1;
+    const key=(dn&&nn)?S.diff:S.std;let b=0;
+    for(let i=0;i<n;i++)if(key[i]>key[b])b=i;
+    selBin=b;
+  }
+}
+function autoColor(){
+  const smp=[];const step=Math.max(1,Math.floor(rows.length*freqs.length/20000));
+  let k=0;for(const r of rows)for(let i=0;i<freqs.length;i++)if((k++)%step===0)smp.push(r.v[i]);
+  smp.sort((a,b)=>a-b);
+  clo=Math.floor(smp[Math.floor(smp.length*0.02)]);chi=Math.ceil(smp[Math.floor(smp.length*0.995)]);
+  if(chi-clo<5)chi=clo+5;
+  $("clo").value=clo;$("chi").value=chi;
+}
+
+// ---------- drawing ----------
+let wfImg=null;
+function drawWaterfall(){
+  const {g,w,h}=setup($("cw"));const n=freqs.length,N=rows.length;
+  const W=w-M.l-M.r,H=h-M.t-M.b;
+  const oc=document.createElement("canvas");oc.width=n;oc.height=N;
+  const og=oc.getContext("2d"),im=og.createImageData(n,N);
+  for(let y=0;y<N;y++)for(let x=0;x<n;x++){
+    const c=color((rows[y].v[x]-clo)/(chi-clo)),o=(y*n+x)*4;
+    im.data[o]=c[0];im.data[o+1]=c[1];im.data[o+2]=c[2];im.data[o+3]=255;
+  }
+  og.putImageData(im,0,0);
+  g.imageSmoothingEnabled=false;g.drawImage(oc,M.l,M.t,W,H);
+  axisX(g,M.l,W,h-M.b);
+  g.fillStyle=css("--mute");g.textAlign="right";
+  const ys=[0,Math.floor((N-1)/2),N-1];
+  for(const r of new Set(ys)){g.fillText(fmtT(rows[r].t),M.l-4,M.t+(r+0.5)/N*H+4)}
+  // crosshair
+  const cx=M.l+(selBin+0.5)/n*W,cy=M.t+(selRow+0.5)/N*H;
+  g.strokeStyle="#fff";g.lineWidth=1;g.setLineDash([4,3]);
+  g.beginPath();g.moveTo(cx,M.t);g.lineTo(cx,M.t+H);g.moveTo(M.l,cy);g.lineTo(M.l+W,cy);g.stroke();g.setLineDash([]);
+  g.strokeStyle="#000";g.globalAlpha=.4;g.beginPath();g.moveTo(cx+1,M.t);g.lineTo(cx+1,M.t+H);g.stroke();g.globalAlpha=1;
+}
+function axisX(g,L,W,y){
+  const n=freqs.length,b=bandBounds();
+  g.fillStyle=css("--mute");g.strokeStyle=css("--line");g.textAlign="center";
+  const ticks=b.map(i=>[i,freqs[i]]);ticks.push([n-1,freqs[n-1]]);
+  let lastX=-99;
+  for(const [i,f] of ticks){
+    const x=L+(i+0.5)/n*W;
+    g.beginPath();g.moveTo(x,y);g.lineTo(x,y+4);g.stroke();
+    if(x-lastX>44){g.fillText(fmtF(f),Math.min(Math.max(x,L+16),L+W-16),y+15);lastX=x}
+  }
+}
+function drawSpectrum(){
+  const {g,w,h}=setup($("cs"));const n=freqs.length;
+  const W=w-M.l-M.r,H=h-M.t-M.b,r=rows[selRow];
+  let lo=clo-3,hi=-1e9;
+  for(let i=0;i<n;i++)hi=Math.max(hi,S.max[i]);hi=Math.max(hi,chi)+3;
+  const X=i=>M.l+(i+0.5)/n*W,Y=v=>M.t+(1-(v-lo)/(hi-lo))*H;
+  yGrid(g,w,lo,hi,Y);
+  const line=(arr,col,wd)=>{g.strokeStyle=col;g.lineWidth=wd;g.beginPath();let st=false;
+    for(let i=0;i<n;i++){const v=arr[i];if(isNaN(v)){st=false;continue}st?g.lineTo(X(i),Y(v)):g.moveTo(X(i),Y(v));st=true}g.stroke()};
+  line(S.max,css("--max"),1);
+  if(S.nn)line(S.nm,css("--night"),1.3);
+  if(S.dn)line(S.dm,css("--day"),1.3);
+  line(r.v,css("--acc"),1.5);
+  axisX(g,M.l,W,h-M.b);
+  const cx=X(selBin);g.strokeStyle=css("--mute");g.setLineDash([4,3]);g.beginPath();g.moveTo(cx,M.t);g.lineTo(cx,M.t+H);g.stroke();g.setLineDash([]);
+}
+function yGrid(g,w,lo,hi,Y){
+  const step=(hi-lo)>60?20:10;
+  g.fillStyle=css("--mute");g.strokeStyle=css("--grid");g.lineWidth=1;g.textAlign="right";
+  for(let v=Math.ceil(lo/step)*step;v<=hi;v+=step){
+    const y=Y(v);g.beginPath();g.moveTo(M.l,y);g.lineTo(w-M.r,y);g.stroke();g.fillText(v,M.l-4,y+4);
+  }
+}
+function drawTime(){
+  const {g,w,h}=setup($("ct"));const N=rows.length,W=w-M.l-M.r,H=h-M.t-M.b,bw=+$("bw").value;
+  const t0=+rows[0].t,t1=+rows[N-1].t,span=Math.max(1,t1-t0);
+  const vals=rows.map(r=>binVal(r,selBin,bw));
+  let lo=Math.min(...vals),hi=Math.max(...vals);if(hi-lo<6){lo-=3;hi+=3}lo-=2;hi+=2;
+  const X=t=>M.l+(N===1?0.5:(t-t0)/span)*W,Y=v=>M.t+(1-(v-lo)/(hi-lo))*H;
+  // 夜の影
+  g.fillStyle=css("--shade");
+  for(let i=0;i<N;i++){
+    if(!hourIn($("night").value,rows[i].t.getHours()))continue;
+    const a=i?(+rows[i-1].t+ +rows[i].t)/2:+rows[i].t,b=i<N-1?(+rows[i].t+ +rows[i+1].t)/2:+rows[i].t;
+    g.fillRect(X(a),M.t,Math.max(1,X(b)-X(a)),H);
+  }
+  yGrid(g,w,lo,hi,Y);
+  g.strokeStyle=css("--acc");g.lineWidth=1.3;g.beginPath();
+  rows.forEach((r,i)=>{const x=X(+r.t),y=Y(vals[i]);i?g.lineTo(x,y):g.moveTo(x,y)});g.stroke();
+  g.fillStyle=css("--mute");g.textAlign="center";
+  for(let k=0;k<=4;k++){const t=t0+span*k/4;g.fillText(fmtT(new Date(t)),Math.min(Math.max(M.l+W*k/4,M.l+30),w-M.r-30),h-6)}
+  const sx=X(+rows[selRow].t);g.strokeStyle=css("--mute");g.setLineDash([4,3]);g.beginPath();g.moveTo(sx,M.t);g.lineTo(sx,M.t+H);g.stroke();g.setLineDash([]);
+}
+function drawHour(){
+  const {g,w,h}=setup($("ch"));const W=w-M.l-M.r,H=h-M.t-M.b,bw=+$("bw").value;
+  const acc=Array.from({length:24},()=>({s:0,n:0,mn:1e9,mx:-1e9}));
+  for(const r of rows){const a=acc[r.t.getHours()],v=binVal(r,selBin,bw);a.s+=v;a.n++;a.mn=Math.min(a.mn,v);a.mx=Math.max(a.mx,v)}
+  let lo=1e9,hi=-1e9;for(const a of acc)if(a.n){lo=Math.min(lo,a.mn);hi=Math.max(hi,a.mx)}
+  if(lo>hi){lo=-100;hi=-50}if(hi-lo<6){lo-=3;hi+=3}lo-=2;hi+=2;
+  const Y=v=>M.t+(1-(v-lo)/(hi-lo))*H,bwid=W/24;
+  yGrid(g,w,lo,hi,Y);
+  acc.forEach((a,hr)=>{
+    if(!a.n)return;
+    const x=M.l+hr*bwid,col=hourIn($("day").value,hr)?css("--day"):hourIn($("night").value,hr)?css("--night"):css("--mute");
+    g.fillStyle=col;g.globalAlpha=.55;const y=Y(a.s/a.n);g.fillRect(x+2,y,bwid-4,M.t+H-y);g.globalAlpha=1;
+    g.strokeStyle=col;g.lineWidth=1.5;g.beginPath();const cx=x+bwid/2;g.moveTo(cx,Y(a.mn));g.lineTo(cx,Y(a.mx));g.stroke();
+  });
+  g.fillStyle=css("--mute");g.textAlign="center";
+  for(let hr=0;hr<24;hr+=3)g.fillText(hr+"時",M.l+hr*bwid+bwid/2,h-6);
+}
+function drawRank(){
+  const key=$("sort").value,n=freqs.length;
+  const arr={diff:S.diff,std:S.std,max:S.max,mean:S.mean}[key];
+  const idx=[...Array(n).keys()].filter(i=>!isNaN(arr[i])).sort((a,b)=>arr[b]-arr[a]);
+  const picked=[];
+  for(const i of idx){if(picked.length>=30)break;if(picked.every(j=>Math.abs(j-i)>3))picked.push(i)}
+  const f=x=>isNaN(x)?"-":x.toFixed(1);
+  $("rank").innerHTML=picked.map(i=>`<tr class="r${i===selBin?" sel":""}" data-i="${i}"><td>${(freqs[i]/1e6).toFixed(3)}</td><td>${f(S.dm[i])}</td><td>${f(S.nm[i])}</td><td>${f(S.diff[i])}</td><td>${f(S.mean[i])}</td><td>${f(S.max[i])}</td><td>${f(S.std[i])}</td></tr>`).join("");
+  document.querySelectorAll("tr.r").forEach(tr=>tr.onclick=()=>{selBin=+tr.dataset.i;redraw()});
+}
+function redraw(){
+  if(!rows.length)return;
+  $("freq").value=(freqs[selBin]/1e6).toFixed(3);
+  drawWaterfall();drawSpectrum();drawTime();drawHour();drawRank();
+  info();
+}
+function info(extra){
+  const r=rows[selRow];
+  $("info").textContent=`選択: ${(freqs[selBin]/1e6).toFixed(3)} MHz / ${fmtT(r.t)} = ${r.v[selBin].toFixed(1)} dBm`+
+   (S.dn&&S.nn?` ｜ 昼平均 ${S.dm[selBin].toFixed(1)} / 夜平均 ${S.nm[selBin].toFixed(1)} (差 ${S.diff[selBin].toFixed(1)} dB)`:` ｜ 昼${S.dn}行 夜${S.nn}行`)+(extra?" ｜ "+extra:"");
+}
+
+// ---------- interaction ----------
+function binFromX(cv,e){const rc=cv.getBoundingClientRect(),W=rc.width-M.l-M.r;return Math.max(0,Math.min(freqs.length-1,Math.floor((e.clientX-rc.left-M.l)/W*freqs.length)))}
+const cw=$("cw");
+cw.onclick=e=>{
+  const rc=cw.getBoundingClientRect(),H=rc.height-M.t-M.b;
+  selBin=binFromX(cw,e);selRow=Math.max(0,Math.min(rows.length-1,Math.floor((e.clientY-rc.top-M.t)/H*rows.length)));redraw();
+};
+cw.onmousemove=e=>{
+  const rc=cw.getBoundingClientRect(),H=rc.height-M.t-M.b;
+  const b=binFromX(cw,e),r=Math.max(0,Math.min(rows.length-1,Math.floor((e.clientY-rc.top-M.t)/H*rows.length)));
+  info(`hover ${(freqs[b]/1e6).toFixed(3)} MHz ${fmtT(rows[r].t)} ${rows[r].v[b].toFixed(1)} dBm`);
+};
+cw.onmouseleave=()=>info();
+$("cs").onclick=e=>{selBin=binFromX($("cs"),e);redraw()};
+$("freq").onchange=()=>{
+  const f=+$("freq").value*1e6;let b=0,d=1e30;
+  freqs.forEach((x,i)=>{const dd=Math.abs(x-f);if(dd<d){d=dd;b=i}});selBin=b;redraw();
+};
+for(const id of ["day","night"])$(id).onchange=()=>{computeStats(false);redraw()};
+$("bw").onchange=redraw;$("sort").onchange=redraw;
+$("clo").onchange=$("chi").onchange=()=>{clo=+$("clo").value;chi=+$("chi").value;redraw()};
+$("auto").onclick=()=>{autoColor();redraw()};
+addEventListener("resize",redraw);
+</script>
+</body>
+</html>
